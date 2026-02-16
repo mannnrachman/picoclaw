@@ -141,9 +141,11 @@ func TestMCPTool_Description(t *testing.T) {
 // TestMCPTool_Parameters verifies parameter schema conversion
 func TestMCPTool_Parameters(t *testing.T) {
 	tests := []struct {
-		name        string
-		inputSchema interface{}
-		expectType  string
+		name           string
+		inputSchema    interface{}
+		expectType     string
+		checkProperty  string
+		expectProperty bool
 	}{
 		{
 			name: "map schema",
@@ -157,12 +159,35 @@ func TestMCPTool_Parameters(t *testing.T) {
 				},
 				"required": []string{"query"},
 			},
-			expectType: "object",
+			expectType:     "object",
+			checkProperty:  "query",
+			expectProperty: true,
 		},
 		{
-			name:        "nil schema",
-			inputSchema: nil,
-			expectType:  "object",
+			name:           "nil schema",
+			inputSchema:    nil,
+			expectType:     "object",
+			expectProperty: false,
+		},
+		{
+			name: "json.RawMessage schema",
+			inputSchema: []byte(`{
+				"type": "object",
+				"properties": {
+					"repo": {
+						"type": "string",
+						"description": "Repository name"
+					},
+					"stars": {
+						"type": "integer",
+						"description": "Minimum stars"
+					}
+				},
+				"required": ["repo"]
+			}`),
+			expectType:     "object",
+			checkProperty:  "repo",
+			expectProperty: true,
 		},
 	}
 
@@ -183,6 +208,22 @@ func TestMCPTool_Parameters(t *testing.T) {
 
 			if params["type"] != tt.expectType {
 				t.Errorf("Expected type '%s', got '%v'", tt.expectType, params["type"])
+			}
+
+			// Check if property exists when expected
+			if tt.checkProperty != "" {
+				properties, ok := params["properties"].(map[string]interface{})
+				if !ok && tt.expectProperty {
+					t.Errorf("Expected properties to be a map")
+					return
+				}
+				if ok {
+					_, hasProperty := properties[tt.checkProperty]
+					if hasProperty != tt.expectProperty {
+						t.Errorf("Expected property '%s' existence: %v, got: %v",
+							tt.checkProperty, tt.expectProperty, hasProperty)
+					}
+				}
 			}
 		})
 	}

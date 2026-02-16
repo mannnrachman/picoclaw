@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -51,26 +52,61 @@ func (t *MCPTool) Parameters() map[string]interface{} {
 	// The InputSchema is already a JSON Schema object
 	schema := t.tool.InputSchema
 
-	// Convert to map[string]interface{} for compatibility
-	result := make(map[string]interface{})
-
-	// Use reflection to convert the schema
-	// The schema should already be in the correct format
-	if schema != nil {
-		// Attempt to convert directly
-		if schemaMap, ok := schema.(map[string]interface{}); ok {
-			return schemaMap
+	// Handle nil schema
+	if schema == nil {
+		return map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+			"required":   []string{},
 		}
+	}
 
-		// Otherwise, build it manually
-		result["type"] = "object"
-		result["properties"] = map[string]interface{}{}
-		result["required"] = []string{}
-	} else {
-		// Default schema when nil
-		result["type"] = "object"
-		result["properties"] = map[string]interface{}{}
-		result["required"] = []string{}
+	// Try direct conversion first (fast path)
+	if schemaMap, ok := schema.(map[string]interface{}); ok {
+		return schemaMap
+	}
+
+	// Handle json.RawMessage and []byte - unmarshal directly
+	var jsonData []byte
+	if rawMsg, ok := schema.(json.RawMessage); ok {
+		jsonData = rawMsg
+	} else if bytes, ok := schema.([]byte); ok {
+		jsonData = bytes
+	}
+
+	if jsonData != nil {
+		var result map[string]interface{}
+		if err := json.Unmarshal(jsonData, &result); err == nil {
+			return result
+		}
+		// Fallback on error
+		return map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+			"required":   []string{},
+		}
+	}
+
+	// For other types (structs, etc.), convert via JSON marshal/unmarshal
+	var err error
+	jsonData, err = json.Marshal(schema)
+	if err != nil {
+		// Fallback to empty schema if marshaling fails
+		return map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+			"required":   []string{},
+		}
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(jsonData, &result); err != nil {
+		// Fallback to empty schema if unmarshaling fails
+		return map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+			"required":   []string{},
+		}
 	}
 
 	return result
