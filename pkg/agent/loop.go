@@ -927,8 +927,8 @@ func (al *AgentLoop) summarizeSession(agent *AgentInstance, sessionKey string) {
 
 		mergePrompt := fmt.Sprintf("Merge these two conversation summaries into one cohesive summary:\n\n1: %s\n\n2: %s", s1, s2)
 		resp, err := agent.Provider.Chat(ctx, []providers.Message{{Role: "user", Content: mergePrompt}}, nil, agent.Model, map[string]interface{}{
-			"max_tokens":  1024,
-			"temperature": 0.3,
+			"max_tokens":  agent.SummaryMaxTokens,
+			"temperature": agent.SummaryTemperature,
 		})
 		if err == nil {
 			finalSummary = resp.Content
@@ -962,8 +962,8 @@ func (al *AgentLoop) summarizeBatch(ctx context.Context, agent *AgentInstance, b
 	}
 
 	response, err := agent.Provider.Chat(ctx, []providers.Message{{Role: "user", Content: prompt}}, nil, agent.Model, map[string]interface{}{
-		"max_tokens":  1024,
-		"temperature": 0.3,
+		"max_tokens":  agent.SummaryMaxTokens,
+		"temperature": agent.SummaryTemperature,
 	})
 	if err != nil {
 		return "", err
