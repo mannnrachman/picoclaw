@@ -28,6 +28,7 @@ type DiscordChannel struct {
 	ctx         context.Context
 	typingMu    sync.Mutex
 	typingStop  map[string]chan struct{} // chatID → stop signal
+	botUserID   string
 }
 
 func NewDiscordChannel(cfg config.DiscordConfig, bus *bus.MessageBus) (*DiscordChannel, error) {
@@ -75,6 +76,7 @@ func (c *DiscordChannel) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to get bot user: %w", err)
 	}
+	c.botUserID = botUser.ID
 	logger.InfoCF("discord", "Discord bot connected", map[string]any{
 		"username": botUser.Username,
 		"user_id":  botUser.ID,
@@ -114,7 +116,9 @@ func (c *DiscordChannel) Send(ctx context.Context, msg bus.OutboundMessage) erro
 		return fmt.Errorf("channel ID is empty")
 	}
 
-	runes := []rune(msg.Content)
+	content := msg.Content
+
+	runes := []rune(content)
 	if len(runes) == 0 {
 		return nil
 	}
@@ -131,7 +135,6 @@ func (c *DiscordChannel) Send(ctx context.Context, msg bus.OutboundMessage) erro
 }
 
 func (c *DiscordChannel) sendChunk(ctx context.Context, channelID, content string) error {
-	// 使用传入的 ctx 进行超时控制
 	sendCtx, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
 
@@ -150,6 +153,114 @@ func (c *DiscordChannel) sendChunk(ctx context.Context, channelID, content strin
 	case <-sendCtx.Done():
 		return fmt.Errorf("send message timeout: %w", sendCtx.Err())
 	}
+}
+
+func splitMessage(content string, limit int) []string {
+	var messages []string
+
+	for len(content) > 0 {
+		if len(content) <= limit {
+			messages = append(messages, content)
+			break
+		}
+
+		msgEnd := limit
+
+		msgEnd = findLastNewline(content[:limit], 200)
+		if msgEnd <= 0 {
+			msgEnd = findLastSpace(content[:limit], 100)
+		}
+		if msgEnd <= 0 {
+			msgEnd = limit
+		}
+
+		candidate := content[:msgEnd]
+		unclosedIdx := findLastUnclosedCodeBlock(candidate)
+
+		if unclosedIdx >= 0 {
+			extendedLimit := limit + 500
+			if len(content) > extendedLimit {
+				closingIdx := findNextClosingCodeBlock(content, msgEnd)
+				if closingIdx > 0 && closingIdx <= extendedLimit {
+					msgEnd = closingIdx
+				} else {
+					msgEnd = findLastNewline(content[:unclosedIdx], 200)
+					if msgEnd <= 0 {
+						msgEnd = findLastSpace(content[:unclosedIdx], 100)
+					}
+					if msgEnd <= 0 {
+						msgEnd = unclosedIdx
+					}
+				}
+			} else {
+				msgEnd = len(content)
+			}
+		}
+
+		if msgEnd <= 0 {
+			msgEnd = limit
+		}
+
+		messages = append(messages, content[:msgEnd])
+		content = strings.TrimSpace(content[msgEnd:])
+	}
+
+	return messages
+}
+
+func findLastUnclosedCodeBlock(text string) int {
+	count := 0
+	lastOpenIdx := -1
+
+	for i := 0; i < len(text); i++ {
+		if i+2 < len(text) && text[i] == '`' && text[i+1] == '`' && text[i+2] == '`' {
+			if count == 0 {
+				lastOpenIdx = i
+			}
+			count++
+			i += 2
+		}
+	}
+
+	if count%2 == 1 {
+		return lastOpenIdx
+	}
+	return -1
+}
+
+func findNextClosingCodeBlock(text string, startIdx int) int {
+	for i := startIdx; i < len(text); i++ {
+		if i+2 < len(text) && text[i] == '`' && text[i+1] == '`' && text[i+2] == '`' {
+			return i + 3
+		}
+	}
+	return -1
+}
+
+func findLastNewline(s string, searchWindow int) int {
+	searchStart := len(s) - searchWindow
+	if searchStart < 0 {
+		searchStart = 0
+	}
+	for i := len(s) - 1; i >= searchStart; i-- {
+		if s[i] == '\n' {
+			return i
+		}
+	}
+	return -1
+}
+
+func findLastSpace(s string, searchWindow int) int {
+	searchStart := len(s) - searchWindow
+	if searchStart < 0 {
+		searchStart = 0
+	}
+	for i := len(s) - 1; i >= searchStart; i-- {
+		if s[i] == ' ' || s[i] == '\t' {
+			return i
+		}
+	}
+	return -1
 }
 
 // appendContent 安全地追加内容到现有文本
@@ -175,6 +286,34 @@ func (c *DiscordChannel) handleMessage(s *discordgo.Session, m *discordgo.Messag
 			"user_id": m.Author.ID,
 		})
 		return
+	}
+
+	// 如果配置为仅响应提及，则检查是否被提及
+	if c.config.MentionOnly {
+		isMentioned := false
+		logger.DebugCF("discord", "Checking mention", map[string]any{
+			"botUserID":    c.botUserID,
+			"mentions":     m.Mentions,
+			"mentionCount": len(m.Mentions),
+		})
+		for _, mention := range m.Mentions {
+			if mention.ID == c.botUserID {
+				isMentioned = true
+				break
+			}
+		}
+		if !isMentioned {
+			logger.DebugCF("discord", "Message ignored - bot not mentioned", map[string]any{
+				"user_id": m.Author.ID,
+			})
+			return
+		}
+	}
+
+	if err := c.session.ChannelTyping(m.ChannelID); err != nil {
+		logger.ErrorCF("discord", "Failed to send typing indicator", map[string]any{
+			"error": err.Error(),
+		})
 	}
 
 	senderID := m.Author.ID
