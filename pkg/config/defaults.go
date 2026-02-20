@@ -262,6 +262,13 @@ func DefaultConfig() *Config {
 			Cron: CronToolsConfig{
 				ExecTimeoutMinutes: 5,
 			},
+			Exec: ExecConfig{
+				EnableDenyPatterns: true,
+			},
+			MCP: MCPConfig{
+				Enabled: false,
+				Servers: map[string]MCPServerConfig{},
+			},
 		},
 		Heartbeat: HeartbeatConfig{
 			Enabled:  true,
