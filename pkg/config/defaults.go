@@ -14,14 +14,20 @@ func DefaultConfig() *Config {
 				RestrictToWorkspace: true,
 				Provider:            "",
 				Model:               "glm-4.7",
+				ContextWindow:       8192,
 				MaxTokens:           8192,
 				Temperature:         nil, // nil means use provider default
+				SummaryMaxTokens:    1024,
+				SummaryTemperature:  0.3,
 				MaxToolIterations:   20,
 			},
 		},
 		Bindings: []AgentBinding{},
 		Session: SessionConfig{
 			DMScope: "main",
+			MemoryMessageLimit: 20,
+			MemoryTokenPercent: 75,
+			MemoryNotifyUser:   false,
 		},
 		Channels: ChannelsConfig{
 			WhatsApp: WhatsAppConfig{
