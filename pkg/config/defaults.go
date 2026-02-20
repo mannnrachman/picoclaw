@@ -42,6 +42,7 @@ func DefaultConfig() *Config {
 			Telegram: TelegramConfig{
 				Enabled:   false,
 				Token:     "",
+				BotName:   "PicoClaw",
 				AllowFrom: FlexibleStringSlice{},
 			},
 			Feishu: FeishuConfig{
@@ -73,6 +74,7 @@ func DefaultConfig() *Config {
 				Enabled:      false,
 				ClientID:     "",
 				ClientSecret: "",
+				BotName:      "PicoClaw",
 				AllowFrom:    FlexibleStringSlice{},
 			},
 			Slack: SlackConfig{
