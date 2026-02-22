@@ -21,7 +21,9 @@ import (
 	"github.com/sipeed/picoclaw/pkg/health"
 	"github.com/sipeed/picoclaw/pkg/heartbeat"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/gateway"
 	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/sipeed/picoclaw/pkg/security"
 	"github.com/sipeed/picoclaw/pkg/state"
 	"github.com/sipeed/picoclaw/pkg/tools"
 	"github.com/sipeed/picoclaw/pkg/voice"
@@ -186,6 +188,20 @@ func gatewayCmd() {
 	}()
 	fmt.Printf("✓ Health endpoints available at http://%s:%d/health and /ready\n", cfg.Gateway.Host, cfg.Gateway.Port)
 
+	// Start REST API server if enabled
+	if cfg.API.Enabled {
+		apiServer := gateway.NewAPIServer(agentLoop, cfg.API)
+		apiPort := cfg.Gateway.Port + 1
+		apiAddr := fmt.Sprintf("%s:%d", cfg.Gateway.Host, apiPort)
+		go func() {
+			logger.InfoCF("api", "REST API server starting", map[string]interface{}{"addr": apiAddr})
+			if err := http.ListenAndServe(apiAddr, apiServer.Handler()); err != nil && err != http.ErrServerClosed {
+				logger.ErrorCF("api", "REST API server error", map[string]interface{}{"error": err.Error()})
+			}
+		}()
+		fmt.Printf("✓ REST API server on http://%s (auth required)\n", apiAddr)
+	}
+
 	go agentLoop.Run(ctx)
 
 	sigChan := make(chan os.Signal, 1)
@@ -209,8 +225,20 @@ func setupCronTool(agentLoop *agent.AgentLoop, msgBus *bus.MessageBus, workspace
 	// Create cron service
 	cronService := cron.NewCronService(cronStorePath, nil)
 
-	// Create and register CronTool
-	cronTool := tools.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout, cfg)
+	// Create PolicyEngine for cron exec tool
+	pe := security.NewPolicyEngine(&cfg.Security, msgBus)
+
+	execCfg := tools.ExecToolConfig{
+		PolicyEngine:  pe,
+		ExecGuardMode: pe.GetMode("exec_guard"),
+	}
+
+	cronTool := tools.NewCronToolWithConfig(cronService, agentLoop, msgBus, workspace, restrict, execCfg)
+
+	// Apply cron-specific exec timeout if configured
+	if execTimeout > 0 {
+		cronTool.SetExecTimeout(execTimeout)
+	}
 	agentLoop.RegisterTool(cronTool)
 
 	// Set the onJob handler
