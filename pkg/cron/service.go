@@ -167,9 +167,10 @@ func (cs *CronService) checkJobs() {
 
 	cs.mu.Unlock()
 
-	// Execute jobs outside lock.
+	// Execute jobs outside lock, each in its own goroutine to avoid
+	// blocking the scheduler loop (agent-processed jobs can take minutes).
 	for _, jobID := range dueJobIDs {
-		cs.executeJobByID(jobID)
+		go cs.executeJobByID(jobID)
 	}
 }
 
@@ -192,9 +193,17 @@ func (cs *CronService) executeJobByID(jobID string) {
 		return
 	}
 
+	log.Printf("[cron] executing job %s (%s), deliver=%v", callbackJob.ID, callbackJob.Name, callbackJob.Payload.Deliver)
+
 	var err error
 	if cs.onJob != nil {
 		_, err = cs.onJob(callbackJob)
+	}
+
+	if err != nil {
+		log.Printf("[cron] job %s completed with error: %v", jobID, err)
+	} else {
+		log.Printf("[cron] job %s completed successfully", jobID)
 	}
 
 	// Now acquire lock to update state
