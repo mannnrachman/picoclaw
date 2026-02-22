@@ -17,6 +17,11 @@ services:
     entrypoint: ["picoclaw", "agent"]
     stdin_open: true
     tty: true
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
 
   # ─────────────────────────────────────────────
   # PicoClaw Gateway (Long-running Bot)
@@ -37,6 +42,26 @@ services:
       # Persistent workspace (sessions, memory, logs)
       - picoclaw-workspace:/home/picoclaw/.picoclaw/workspace
     command: ["gateway"]
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+  # ─────────────────────────────────────────────
+  # Jaeger (Tracing UI + OTLP collector)
+  #   UI: http://localhost:16686
+  # ─────────────────────────────────────────────
+  jaeger:
+    image: jaegertracing/jaeger:2
+    container_name: picoclaw-jaeger
+    profiles:
+      - tracing
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4317:4317"    # OTLP gRPC
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
 
 volumes:
   picoclaw-workspace:
