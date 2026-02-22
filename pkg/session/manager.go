@@ -86,6 +86,18 @@ func (sm *SessionManager) AddFullMessage(sessionKey string, msg providers.Messag
 	session.Updated = time.Now()
 }
 
+// ListSessions returns all session keys.
+func (sm *SessionManager) ListSessions() []string {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	keys := make([]string, 0, len(sm.sessions))
+	for k := range sm.sessions {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 func (sm *SessionManager) GetHistory(key string) []providers.Message {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -141,7 +153,18 @@ func (sm *SessionManager) TruncateHistory(key string, keepLast int) {
 		return
 	}
 
-	session.Messages = session.Messages[len(session.Messages)-keepLast:]
+	startIdx := len(session.Messages) - keepLast
+	// Adjust to start at a user message boundary for valid turn ordering.
+	// This prevents truncation from landing mid-sequence (e.g., starting
+	// with assistant+tool_calls or tool results).
+	for startIdx < len(session.Messages) && session.Messages[startIdx].Role != "user" {
+		startIdx++
+	}
+	if startIdx >= len(session.Messages) {
+		// No user message found — keep all messages rather than corrupt history
+		return
+	}
+	session.Messages = session.Messages[startIdx:]
 	session.Updated = time.Now()
 }
 
@@ -279,4 +302,42 @@ func (sm *SessionManager) SetHistory(key string, history []providers.Message) {
 		session.Messages = msgs
 		session.Updated = time.Now()
 	}
+}
+
+// ListSessionsByPrefix returns a list of sessions that match the given prefix.
+// The prefix is typically the channel:chatID part.
+func (sm *SessionManager) ListSessionsByPrefix(prefix string) []string {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	var sessions []string
+	for key := range sm.sessions {
+		if strings.HasPrefix(key, prefix) {
+			sessions = append(sessions, key)
+		}
+	}
+	return sessions
+}
+
+// DeleteSession removes a session from memory and disk.
+func (sm *SessionManager) DeleteSession(key string) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	// Remove from memory
+	delete(sm.sessions, key)
+
+	if sm.storage == "" {
+		return nil
+	}
+
+	// Remove from disk
+	filename := sanitizeFilename(key) + ".json"
+	sessionPath := filepath.Join(sm.storage, filename)
+
+	if err := os.Remove(sessionPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	return nil
 }
