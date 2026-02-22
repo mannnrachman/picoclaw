@@ -198,12 +198,23 @@ func (cb *ContextBuilder) BuildMessages(history []providers.Message, summary str
 
 	messages = append(messages, history...)
 
-	if strings.TrimSpace(currentMessage) != "" {
-		messages = append(messages, providers.Message{
-			Role:    "user",
-			Content: currentMessage,
-		})
+	userMsg := providers.Message{
+		Role:    "user",
+		Content: currentMessage,
 	}
+	if len(media) > 0 {
+		parts := []providers.ContentPart{
+			{Type: "text", Text: currentMessage},
+		}
+		for _, url := range media {
+			parts = append(parts, providers.ContentPart{
+				Type:     "image_url",
+				ImageURL: &providers.ImageURL{URL: url},
+			})
+		}
+		userMsg.ContentParts = parts
+	}
+	messages = append(messages, userMsg)
 
 	return messages
 }
@@ -213,6 +224,7 @@ func sanitizeHistoryForProvider(history []providers.Message) []providers.Message
 		return history
 	}
 
+	// Pass 1: Drop orphaned messages and merge consecutive user messages
 	sanitized := make([]providers.Message, 0, len(history))
 	for _, msg := range history {
 		switch msg.Role {
@@ -221,8 +233,18 @@ func sanitizeHistoryForProvider(history []providers.Message) []providers.Message
 				logger.DebugCF("agent", "Dropping orphaned leading tool message", map[string]interface{}{})
 				continue
 			}
-			last := sanitized[len(sanitized)-1]
-			if last.Role != "assistant" || len(last.ToolCalls) == 0 {
+			// Check that there's a preceding assistant with tool_calls
+			hasAssistant := false
+			for j := len(sanitized) - 1; j >= 0; j-- {
+				if sanitized[j].Role == "tool" {
+					continue
+				}
+				if sanitized[j].Role == "assistant" && len(sanitized[j].ToolCalls) > 0 {
+					hasAssistant = true
+				}
+				break
+			}
+			if !hasAssistant {
 				logger.DebugCF("agent", "Dropping orphaned tool message", map[string]interface{}{})
 				continue
 			}
@@ -243,11 +265,70 @@ func sanitizeHistoryForProvider(history []providers.Message) []providers.Message
 			sanitized = append(sanitized, msg)
 
 		default:
-			sanitized = append(sanitized, msg)
+			// Merge consecutive user messages (keep only the latest)
+			if msg.Role == "user" && len(sanitized) > 0 && sanitized[len(sanitized)-1].Role == "user" {
+				sanitized[len(sanitized)-1] = msg
+			} else {
+				sanitized = append(sanitized, msg)
+			}
 		}
 	}
 
-	return sanitized
+	// Pass 2: Validate tool call completeness.
+	// Every assistant message with tool_calls must have ALL corresponding
+	// tool results. Incomplete groups are removed to prevent API errors
+	// like "No tool output found for function call".
+	validated := make([]providers.Message, 0, len(sanitized))
+	i := 0
+	for i < len(sanitized) {
+		msg := sanitized[i]
+
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			// Collect expected tool call IDs
+			expectedIDs := make(map[string]bool)
+			for _, tc := range msg.ToolCalls {
+				if tc.ID != "" {
+					expectedIDs[tc.ID] = true
+				}
+			}
+
+			// Look ahead for tool results
+			j := i + 1
+			foundIDs := make(map[string]bool)
+			for j < len(sanitized) && sanitized[j].Role == "tool" {
+				if sanitized[j].ToolCallID != "" {
+					foundIDs[sanitized[j].ToolCallID] = true
+				}
+				j++
+			}
+
+			// Check if ALL expected IDs have results
+			complete := len(expectedIDs) > 0
+			for id := range expectedIDs {
+				if !foundIDs[id] {
+					complete = false
+					break
+				}
+			}
+
+			if complete {
+				for k := i; k < j; k++ {
+					validated = append(validated, sanitized[k])
+				}
+			} else {
+				logger.DebugCF("agent", "Dropping incomplete tool-call group", map[string]interface{}{
+					"expected": len(expectedIDs),
+					"found":    len(foundIDs),
+				})
+			}
+			i = j
+		} else {
+			validated = append(validated, msg)
+			i++
+		}
+	}
+
+	return validated
 }
 
 func (cb *ContextBuilder) AddToolResult(messages []providers.Message, toolCallID, toolName, result string) []providers.Message {

@@ -18,12 +18,14 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
+	"github.com/sipeed/picoclaw/pkg/command"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/constants"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/mcp"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/routing"
+	"github.com/sipeed/picoclaw/pkg/session"
 	"github.com/sipeed/picoclaw/pkg/state"
 	"github.com/sipeed/picoclaw/pkg/tools"
 	"github.com/sipeed/picoclaw/pkg/utils"
@@ -43,6 +45,7 @@ type AgentLoop struct {
 	summarizing    sync.Map
 	fallback       *providers.FallbackChain
 	channelManager *channels.Manager
+	commandRegistry *command.Registry
 }
 
 // processOptions configures how a message is processed
@@ -74,6 +77,15 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		stateManager = state.NewManager(defaultAgent.Workspace)
 	}
 
+
+	// Create command registry
+	cmdRegistry := command.NewRegistry()
+	cmdRegistry.Register(&command.ShowCommand{})
+	cmdRegistry.Register(&command.ListCommand{})
+	cmdRegistry.Register(&command.SwitchCommand{})
+	cmdRegistry.Register(&command.SessionCommand{})
+	cmdRegistry.Register(&command.StartCommand{})
+	cmdRegistry.Register(&command.HelpCommand{Registry: cmdRegistry})
 	return &AgentLoop{
 		bus:         msgBus,
 		cfg:         cfg,
@@ -81,6 +93,7 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		state:       stateManager,
 		summarizing: sync.Map{},
 		fallback:    fallbackChain,
+		commandRegistry: cmdRegistry,
 	}
 }
 
@@ -138,6 +151,47 @@ func registerSharedTools(cfg *config.Config, msgBus *bus.MessageBus, registry *A
 	}
 }
 
+
+// GetSessionManager exposes the session manager for the default agent.
+func (al *AgentLoop) GetSessionManager() *session.SessionManager {
+	defaultAgent := al.registry.GetDefaultAgent()
+	if defaultAgent == nil {
+		return nil
+	}
+	return defaultAgent.Sessions
+}
+
+// GetStateManager exposes the state manager.
+func (al *AgentLoop) GetStateManager() interface{} {
+	return al.state
+}
+
+// GetModel returns the model of the default agent.
+func (al *AgentLoop) GetModel() string {
+	defaultAgent := al.registry.GetDefaultAgent()
+	if defaultAgent == nil {
+		return ""
+	}
+	return defaultAgent.Model
+}
+
+// SetModel sets the model of the default agent.
+func (al *AgentLoop) SetModel(model string) {
+	defaultAgent := al.registry.GetDefaultAgent()
+	if defaultAgent != nil {
+		defaultAgent.Model = model
+	}
+}
+
+// GetChannelManager returns the channel manager.
+func (al *AgentLoop) GetChannelManager() interface{} {
+	return al.channelManager
+}
+
+// GetAgentIDs returns the list of registered agent IDs.
+func (al *AgentLoop) GetAgentIDs() []string {
+	return al.registry.ListAgentIDs()
+}
 func (al *AgentLoop) Run(ctx context.Context) error {
 	al.running.Store(true)
 
@@ -839,6 +893,15 @@ func (al *AgentLoop) forceCompression(agent *AgentInstance, sessionKey string) {
 	// Helper to find the mid-point of the conversation
 	mid := len(conversation) / 2
 
+	// Adjust mid to avoid splitting tool call groups.
+	// If mid falls on a tool message, move forward past the group.
+	for mid < len(conversation) && conversation[mid].Role == "tool" {
+		mid++
+	}
+	if mid >= len(conversation) {
+		mid = len(conversation) / 2
+	}
+
 	// New history structure:
 	// 1. System Prompt (with compression note appended)
 	// 2. Second half of conversation
@@ -957,15 +1020,37 @@ func (al *AgentLoop) summarizeSession(agent *AgentInstance, sessionKey string) {
 	history := agent.Sessions.GetHistory(sessionKey)
 	summary := agent.Sessions.GetSummary(sessionKey)
 
-	// Keep last 4 messages for continuity
-	if len(history) <= 4 {
+	// Keep last N messages for continuity, ensuring we don't split tool call groups
+	keepLast := 4
+	if len(history) <= keepLast {
 		return
 	}
 
-	toSummarize := history[:len(history)-4]
+	// Adjust split point to avoid breaking tool call groups
+	splitIdx := len(history) - keepLast
+	for splitIdx > 0 && history[splitIdx].Role == "tool" {
+		splitIdx--
+	}
+	if splitIdx > 0 && history[splitIdx].Role == "assistant" && len(history[splitIdx].ToolCalls) > 0 {
+		splitIdx--
+	}
+	if splitIdx < 0 {
+		splitIdx = 0
+	}
+	keepLast = len(history) - splitIdx
+	if keepLast >= len(history) {
+		return
+	}
+
+	toSummarize := history[:len(history)-keepLast]
 
 	// Oversized Message Guard
-	maxMessageTokens := agent.ContextWindow / 2
+	// Use configurable compression_trigger_ratio (default 0.75) to skip oversized messages
+	compressionRatio := 0.5
+	if al.cfg != nil && al.cfg.Agents.Defaults.CompressionTriggerRatio > 0 {
+		compressionRatio = al.cfg.Agents.Defaults.CompressionTriggerRatio
+	}
+	maxMessageTokens := int(float64(agent.ContextWindow) * compressionRatio)
 	validMessages := make([]providers.Message, 0)
 	omitted := false
 
@@ -1015,7 +1100,7 @@ func (al *AgentLoop) summarizeSession(agent *AgentInstance, sessionKey string) {
 
 	if finalSummary != "" {
 		agent.Sessions.SetSummary(sessionKey, finalSummary)
-		agent.Sessions.TruncateHistory(sessionKey, 4)
+		agent.Sessions.TruncateHistory(sessionKey, keepLast)
 		agent.Sessions.Save(sessionKey)
 	}
 }
@@ -1054,93 +1139,16 @@ func (al *AgentLoop) estimateTokens(messages []providers.Message) int {
 }
 
 func (al *AgentLoop) handleCommand(ctx context.Context, msg bus.InboundMessage) (string, bool) {
-	content := strings.TrimSpace(msg.Content)
-	if !strings.HasPrefix(content, "/") {
+	name, args, ok := al.commandRegistry.Parse(msg.Content)
+	if !ok {
 		return "", false
 	}
 
-	parts := strings.Fields(content)
-	if len(parts) == 0 {
-		return "", false
+	response, handled, err := al.commandRegistry.Execute(ctx, al, name, args, msg)
+	if err != nil {
+		return fmt.Sprintf("Error executing command: %v", err), true
 	}
-
-	cmd := parts[0]
-	args := parts[1:]
-
-	switch cmd {
-	case "/show":
-		if len(args) < 1 {
-			return "Usage: /show [model|channel|agents]", true
-		}
-		switch args[0] {
-		case "model":
-			defaultAgent := al.registry.GetDefaultAgent()
-			if defaultAgent == nil {
-				return "No default agent configured", true
-			}
-			return fmt.Sprintf("Current model: %s", defaultAgent.Model), true
-		case "channel":
-			return fmt.Sprintf("Current channel: %s", msg.Channel), true
-		case "agents":
-			agentIDs := al.registry.ListAgentIDs()
-			return fmt.Sprintf("Registered agents: %s", strings.Join(agentIDs, ", ")), true
-		default:
-			return fmt.Sprintf("Unknown show target: %s", args[0]), true
-		}
-
-	case "/list":
-		if len(args) < 1 {
-			return "Usage: /list [models|channels|agents]", true
-		}
-		switch args[0] {
-		case "models":
-			return "Available models: configured in config.json per agent", true
-		case "channels":
-			if al.channelManager == nil {
-				return "Channel manager not initialized", true
-			}
-			channels := al.channelManager.GetEnabledChannels()
-			if len(channels) == 0 {
-				return "No channels enabled", true
-			}
-			return fmt.Sprintf("Enabled channels: %s", strings.Join(channels, ", ")), true
-		case "agents":
-			agentIDs := al.registry.ListAgentIDs()
-			return fmt.Sprintf("Registered agents: %s", strings.Join(agentIDs, ", ")), true
-		default:
-			return fmt.Sprintf("Unknown list target: %s", args[0]), true
-		}
-
-	case "/switch":
-		if len(args) < 3 || args[1] != "to" {
-			return "Usage: /switch [model|channel] to <name>", true
-		}
-		target := args[0]
-		value := args[2]
-
-		switch target {
-		case "model":
-			defaultAgent := al.registry.GetDefaultAgent()
-			if defaultAgent == nil {
-				return "No default agent configured", true
-			}
-			oldModel := defaultAgent.Model
-			defaultAgent.Model = value
-			return fmt.Sprintf("Switched model from %s to %s", oldModel, value), true
-		case "channel":
-			if al.channelManager == nil {
-				return "Channel manager not initialized", true
-			}
-			if _, exists := al.channelManager.GetChannel(value); !exists && value != "cli" {
-				return fmt.Sprintf("Channel '%s' not found or not enabled", value), true
-			}
-			return fmt.Sprintf("Switched target channel to %s", value), true
-		default:
-			return fmt.Sprintf("Unknown switch target: %s", target), true
-		}
-	}
-
-	return "", false
+	return response, handled
 }
 
 // extractPeer extracts the routing peer from inbound message metadata.
