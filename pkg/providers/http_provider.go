@@ -13,6 +13,7 @@ import (
 )
 
 type HTTPProvider struct {
+	keyRotator  *KeyRotator
 	delegate *openai_compat.Provider
 }
 
@@ -26,6 +27,12 @@ func NewHTTPProviderWithMaxTokensField(apiKey, apiBase, proxy, maxTokensField st
 	return &HTTPProvider{
 		delegate: openai_compat.NewProviderWithMaxTokensField(apiKey, apiBase, proxy, maxTokensField),
 	}
+}
+
+func NewHTTPProviderWithKeys(keys []string, apiBase, proxy string) *HTTPProvider {
+	p := NewHTTPProvider(keys[0], apiBase, proxy)
+	p.keyRotator = NewKeyRotator(keys)
+	return p
 }
 
 func (p *HTTPProvider) Chat(ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]interface{}) (*LLMResponse, error) {

@@ -16,6 +16,8 @@ type ToolDefinition = protocoltypes.ToolDefinition
 type ToolFunctionDefinition = protocoltypes.ToolFunctionDefinition
 type ExtraContent = protocoltypes.ExtraContent
 type GoogleExtra = protocoltypes.GoogleExtra
+type ContentPart = protocoltypes.ContentPart
+type ImageURL = protocoltypes.ImageURL
 
 type LLMProvider interface {
 	Chat(ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]interface{}) (*LLMResponse, error)

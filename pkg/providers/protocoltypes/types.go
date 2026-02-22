@@ -1,5 +1,7 @@
 package protocoltypes
 
+import "encoding/json"
+
 type ToolCall struct {
 	ID               string                 `json:"id"`
 	Type             string                 `json:"type,omitempty"`
@@ -27,8 +29,9 @@ type FunctionCall struct {
 type LLMResponse struct {
 	Content      string     `json:"content"`
 	ToolCalls    []ToolCall `json:"tool_calls,omitempty"`
-	FinishReason string     `json:"finish_reason"`
-	Usage        *UsageInfo `json:"usage,omitempty"`
+	FinishReason        string          `json:"finish_reason"`
+	Usage               *UsageInfo      `json:"usage,omitempty"`
+	RawAssistantMessage json.RawMessage `json:"-"`
 }
 
 type UsageInfo struct {
@@ -37,11 +40,23 @@ type UsageInfo struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
+type ContentPart struct {
+	Type     string   `json:"type"`
+	Text     string   `json:"text,omitempty"`
+	ImageURL *ImageURL `json:"image_url,omitempty"`
+}
+
+type ImageURL struct {
+	URL string `json:"url"`
+}
+
 type Message struct {
 	Role       string     `json:"role"`
 	Content    string     `json:"content"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	ContentParts []ContentPart   `json:"content_parts,omitempty"`
+	ToolCallID   string          `json:"tool_call_id,omitempty"`
+	RawAPIMessage []byte          `json:"-"`
 }
 
 type ToolDefinition struct {
