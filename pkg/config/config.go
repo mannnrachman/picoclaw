@@ -57,6 +57,9 @@ type Config struct {
 	Tools     ToolsConfig     `json:"tools"`
 	Heartbeat HeartbeatConfig `json:"heartbeat"`
 	Devices   DevicesConfig   `json:"devices"`
+	Security  SecurityConfig  `json:"security"`
+	Tracing   TracingConfig   `json:"tracing"`
+	API       APIConfig       `json:"api"`
 }
 
 // MarshalJSON implements custom JSON marshaling for Config
@@ -162,21 +165,30 @@ type AgentBinding struct {
 }
 
 type SessionConfig struct {
-	DMScope       string              `json:"dm_scope,omitempty"`
-	IdentityLinks map[string][]string `json:"identity_links,omitempty"`
+	DMScope            string              `json:"dm_scope,omitempty"`
+	IdentityLinks      map[string][]string `json:"identity_links,omitempty"`
+	MemoryMessageLimit int                 `json:"memory_message_limit" env:"PICOCLAW_SESSION_MEMORY_MESSAGE_LIMIT"`
+	MemoryTokenPercent int                 `json:"memory_token_percent" env:"PICOCLAW_SESSION_MEMORY_TOKEN_PERCENT"`
+	MemoryNotifyUser   bool                `json:"memory_notify_user" env:"PICOCLAW_SESSION_MEMORY_NOTIFY_USER"`
 }
 
 type AgentDefaults struct {
-	Workspace           string   `json:"workspace" env:"PICOCLAW_AGENTS_DEFAULTS_WORKSPACE"`
-	RestrictToWorkspace bool     `json:"restrict_to_workspace" env:"PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
-	Provider            string   `json:"provider" env:"PICOCLAW_AGENTS_DEFAULTS_PROVIDER"`
-	Model               string   `json:"model" env:"PICOCLAW_AGENTS_DEFAULTS_MODEL"`
-	ModelFallbacks      []string `json:"model_fallbacks,omitempty"`
-	ImageModel          string   `json:"image_model,omitempty" env:"PICOCLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
-	ImageModelFallbacks []string `json:"image_model_fallbacks,omitempty"`
-	MaxTokens           int      `json:"max_tokens" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
-	Temperature         *float64 `json:"temperature,omitempty" env:"PICOCLAW_AGENTS_DEFAULTS_TEMPERATURE"`
-	MaxToolIterations   int      `json:"max_tool_iterations" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
+	Workspace               string   `json:"workspace" env:"PICOCLAW_AGENTS_DEFAULTS_WORKSPACE"`
+	RestrictToWorkspace     bool     `json:"restrict_to_workspace" env:"PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
+	Provider                string   `json:"provider" env:"PICOCLAW_AGENTS_DEFAULTS_PROVIDER"`
+	Model                   string   `json:"model" env:"PICOCLAW_AGENTS_DEFAULTS_MODEL"`
+	ModelFallbacks          []string `json:"model_fallbacks,omitempty"`
+	ImageModel              string   `json:"image_model,omitempty" env:"PICOCLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
+	ImageModelFallbacks     []string `json:"image_model_fallbacks,omitempty"`
+	ContextWindow           int      `json:"context_window" env:"PICOCLAW_AGENTS_DEFAULTS_CONTEXT_WINDOW"`
+	MaxTokens               int      `json:"max_tokens" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
+	Temperature             *float64 `json:"temperature,omitempty" env:"PICOCLAW_AGENTS_DEFAULTS_TEMPERATURE"`
+	SummaryMaxTokens        int      `json:"summary_max_tokens" env:"PICOCLAW_AGENTS_DEFAULTS_SUMMARY_MAX_TOKENS"`
+	SummaryTemperature      float64  `json:"summary_temperature" env:"PICOCLAW_AGENTS_DEFAULTS_SUMMARY_TEMPERATURE"`
+	MaxToolIterations       int      `json:"max_tool_iterations" env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
+	CompressionTriggerRatio float64  `json:"compression_trigger_ratio" env:"PICOCLAW_AGENTS_DEFAULTS_COMPRESSION_TRIGGER_RATIO"`
+	SummaryTriggerMessages  int      `json:"summary_trigger_messages" env:"PICOCLAW_AGENTS_DEFAULTS_SUMMARY_TRIGGER_MESSAGES"`
+	SummaryTriggerRatio     float64  `json:"summary_trigger_ratio" env:"PICOCLAW_AGENTS_DEFAULTS_SUMMARY_TRIGGER_RATIO"`
 }
 
 type ChannelsConfig struct {
@@ -201,15 +213,18 @@ type WhatsAppConfig struct {
 }
 
 type WhatsmeowConfig struct {
-	Enabled   bool                `json:"enabled" env:"PICOCLAW_CHANNELS_WHATSMEOW_ENABLED"`
-	DBPath    string              `json:"db_path" env:"PICOCLAW_CHANNELS_WHATSMEOW_DB_PATH"`
-	AllowFrom FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_CHANNELS_WHATSMEOW_ALLOW_FROM"`
+	Enabled         bool                `json:"enabled" env:"PICOCLAW_CHANNELS_WHATSMEOW_ENABLED"`
+	DBPath          string              `json:"db_path" env:"PICOCLAW_CHANNELS_WHATSMEOW_DB_PATH"`
+	AllowFrom       FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_CHANNELS_WHATSMEOW_ALLOW_FROM"`
+	MentionOnly     bool                `json:"mention_only" env:"PICOCLAW_CHANNELS_WHATSMEOW_MENTION_ONLY"`
+	MentionPatterns FlexibleStringSlice `json:"mention_patterns" env:"PICOCLAW_CHANNELS_WHATSMEOW_MENTION_PATTERNS"`
 }
 
 type TelegramConfig struct {
 	Enabled   bool                `json:"enabled" env:"PICOCLAW_CHANNELS_TELEGRAM_ENABLED"`
 	Token     string              `json:"token" env:"PICOCLAW_CHANNELS_TELEGRAM_TOKEN"`
 	Proxy     string              `json:"proxy" env:"PICOCLAW_CHANNELS_TELEGRAM_PROXY"`
+	BotName   string              `json:"bot_name" env:"PICOCLAW_CHANNELS_TELEGRAM_BOT_NAME"`
 	AllowFrom FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_CHANNELS_TELEGRAM_ALLOW_FROM"`
 }
 
@@ -247,6 +262,7 @@ type DingTalkConfig struct {
 	Enabled      bool                `json:"enabled" env:"PICOCLAW_CHANNELS_DINGTALK_ENABLED"`
 	ClientID     string              `json:"client_id" env:"PICOCLAW_CHANNELS_DINGTALK_CLIENT_ID"`
 	ClientSecret string              `json:"client_secret" env:"PICOCLAW_CHANNELS_DINGTALK_CLIENT_SECRET"`
+	BotName      string              `json:"bot_name" env:"PICOCLAW_CHANNELS_DINGTALK_BOT_NAME"`
 	AllowFrom    FlexibleStringSlice `json:"allow_from" env:"PICOCLAW_CHANNELS_DINGTALK_ALLOW_FROM"`
 }
 
@@ -285,6 +301,27 @@ type PushoverConfig struct {
 type HeartbeatConfig struct {
 	Enabled  bool `json:"enabled" env:"PICOCLAW_HEARTBEAT_ENABLED"`
 	Interval int  `json:"interval" env:"PICOCLAW_HEARTBEAT_INTERVAL"` // minutes, min 5
+}
+
+type TracingConfig struct {
+	Enabled  bool   `json:"enabled" env:"PICOCLAW_TRACING_ENABLED"`
+	Endpoint string `json:"endpoint" env:"PICOCLAW_TRACING_ENDPOINT"`
+}
+
+type APIConfig struct {
+	Enabled bool   `json:"enabled" env:"PICOCLAW_API_ENABLED"`
+	APIKey  string `json:"api_key" env:"PICOCLAW_API_KEY"`
+}
+
+// SecurityConfig controls optional security features.
+// All modes default to "off" to preserve pre-security-modification behavior.
+// Supported modes: "off" (disabled), "block" (reject), "approve" (IM-based approval).
+type SecurityConfig struct {
+	ExecGuard       string `json:"exec_guard" env:"PICOCLAW_SECURITY_EXEC_GUARD"`             // "off" | "block" | "approve"
+	SSRFProtection  string `json:"ssrf_protection" env:"PICOCLAW_SECURITY_SSRF_PROTECTION"`   // "off" | "block" | "approve"
+	PathValidation  string `json:"path_validation" env:"PICOCLAW_SECURITY_PATH_VALIDATION"`   // "off" | "block" | "approve"
+	SkillValidation string `json:"skill_validation" env:"PICOCLAW_SECURITY_SKILL_VALIDATION"` // "off" | "block" | "approve"
+	ApprovalTimeout int    `json:"approval_timeout" env:"PICOCLAW_SECURITY_APPROVAL_TIMEOUT"` // seconds, default 300
 }
 
 type DevicesConfig struct {
@@ -346,6 +383,7 @@ func (p ProvidersConfig) MarshalJSON() ([]byte, error) {
 
 type ProviderConfig struct {
 	APIKey      string `json:"api_key" env:"PICOCLAW_PROVIDERS_{{.Name}}_API_KEY"`
+	APIKeys     []string `json:"api_keys,omitempty"`
 	APIBase     string `json:"api_base" env:"PICOCLAW_PROVIDERS_{{.Name}}_API_BASE"`
 	Proxy       string `json:"proxy,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_PROXY"`
 	AuthMethod  string `json:"auth_method,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_AUTH_METHOD"`
@@ -430,10 +468,27 @@ type ExecConfig struct {
 	CustomDenyPatterns []string `json:"custom_deny_patterns" env:"PICOCLAW_TOOLS_EXEC_CUSTOM_DENY_PATTERNS"`
 }
 
+type MCPServerConfig struct {
+	Enabled bool              `json:"enabled"`
+	Type    string            `json:"type,omitempty"` // "stdio" or "sse"; defaults to "stdio"
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	EnvFile string            `json:"env_file,omitempty"`
+	URL     string            `json:"url,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+type MCPConfig struct {
+	Enabled bool                       `json:"enabled" env:"PICOCLAW_TOOLS_MCP_ENABLED"`
+	Servers map[string]MCPServerConfig `json:"servers"`
+}
+
 type ToolsConfig struct {
 	Web  WebToolsConfig  `json:"web"`
 	Cron CronToolsConfig `json:"cron"`
 	Exec ExecConfig      `json:"exec"`
+	MCP  MCPConfig       `json:"mcp"`
 }
 
 func LoadConfig(path string) (*Config, error) {

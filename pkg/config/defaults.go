@@ -19,7 +19,10 @@ func DefaultConfig() *Config {
 				Temperature:         nil, // nil means use provider default
 				SummaryMaxTokens:    1024,
 				SummaryTemperature:  0.3,
-				MaxToolIterations:   20,
+				MaxToolIterations:       20,
+				CompressionTriggerRatio: 0.75,
+				SummaryTriggerMessages:  20,
+				SummaryTriggerRatio:     0.75,
 			},
 		},
 		Bindings: []AgentBinding{},
@@ -289,6 +292,21 @@ func DefaultConfig() *Config {
 		Devices: DevicesConfig{
 			Enabled:    false,
 			MonitorUSB: true,
+		},
+		Security: SecurityConfig{
+			ExecGuard:       "off",
+			SSRFProtection:  "off",
+			PathValidation:  "off",
+			SkillValidation: "off",
+			ApprovalTimeout: 300,
+		},
+		Tracing: TracingConfig{
+			Enabled:  false,
+			Endpoint: "localhost:4317",
+		},
+		API: APIConfig{
+			Enabled: false,
+			APIKey:  "",
 		},
 	}
 }
