@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -224,6 +225,17 @@ func (c *WhatsmeowChannel) handleIncomingMessage(msg *events.Message) {
 	if msg.Info.IsGroup {
 		metadata["peer_kind"] = "group"
 		metadata["peer_id"] = msg.Info.Chat.User
+
+		// mention_only: skip group messages where bot is not mentioned
+		if c.config.MentionOnly {
+			if !c.isMentioned(msg, content) {
+				logger.DebugCF("whatsmeow", "Message ignored - bot not mentioned in group", map[string]interface{}{
+					"sender": senderID,
+					"chat":   chatID,
+				})
+				return
+			}
+		}
 	} else {
 		metadata["peer_kind"] = "dm"
 		metadata["peer_id"] = msg.Info.Sender.User
@@ -236,6 +248,48 @@ func (c *WhatsmeowChannel) handleIncomingMessage(msg *events.Message) {
 	})
 
 	c.HandleMessage(senderID, chatID, content, mediaPaths, metadata)
+}
+
+// isMentioned checks if the bot is mentioned in a WhatsApp group message.
+// It checks both native WhatsApp @-mentions (mentionedJid) and text-based
+// mention patterns configured in mention_patterns.
+func (c *WhatsmeowChannel) isMentioned(msg *events.Message, content string) bool {
+	// Check native WhatsApp @-mentions
+	if ext := msg.Message.GetExtendedTextMessage(); ext != nil {
+		if ci := ext.GetContextInfo(); ci != nil {
+			botJID := ""
+			c.mu.Lock()
+			if c.client != nil && c.client.Store.ID != nil {
+				botJID = c.client.Store.ID.User
+			}
+			c.mu.Unlock()
+
+			for _, jid := range ci.GetMentionedJID() {
+				parsed, err := types.ParseJID(jid)
+				if err == nil && parsed.User == botJID {
+					return true
+				}
+			}
+		}
+	}
+
+	// Check text-based mention patterns
+	lowerContent := strings.ToLower(content)
+	for _, pattern := range c.config.MentionPatterns {
+		re, err := regexp.Compile("(?i)" + pattern)
+		if err != nil {
+			// Fallback to simple substring match
+			if strings.Contains(lowerContent, strings.ToLower(pattern)) {
+				return true
+			}
+			continue
+		}
+		if re.MatchString(content) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // downloadMedia downloads a WhatsApp media message to a temporary file.
